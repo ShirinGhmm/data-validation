@@ -132,10 +132,9 @@ async def Incoming_stream_processing_to_get_DataTable(request: Request):
         new_file = Data_File(file_path)
         # Calls the table_of_df method of the Data_File instance returning table or DataFrame.
         table = new_file.table_of_df()
-        # Checks if file_path is not None (a temporary file was successfully created)
-
         # deletes the temporary file from the filesystem
         os.unlink(file_path)
+        logger.info(f"Temporary CSV file deleted at {file_path}")
         return table
 
     # Exception Handling
@@ -152,7 +151,6 @@ async def Incoming_stream_processing_to_get_DataTable(request: Request):
         logger.error(traceback.format_exc())  # format_exc(): Formatting the Exception
         # Returns a JSON response containing the error message and the path to the problematic file.
         return {"error": str(e), "problematic_file": error_file_path}
-    # regardless of whether an exception was raised, it starts the finally block.
 
 
 """it defines an endpoint responding to HTTP POST requests.
@@ -193,11 +191,12 @@ async def Incoming_stream_processing_to_get_DataTable(request: Request):
         new_file = Data_File(file_path)
         data_table = new_file.table_of_df()
         os.unlink(file_path)
+        logger.info(f"Temporary TXT file deleted at {file_path}")
         return data_table
 
     except Exception as e:
         error_file_path = "Temporary file not created"
-        logger.error(f"Error processing CSV data table: {e}")
+        logger.error(f"Error processing TXT data table: {e}")
         logger.error(traceback.format_exc())
         return {"error": str(e), "problematic_file": error_file_path}
 
@@ -235,6 +234,7 @@ async def Incoming_stream_processing_to_get_DataTable(request: Request):
         new_file = Data_File(file_path)
         rMin_rMax_MA_values = new_file.info_R_in_MA_for_database()
         os.unlink(file_path)
+        logger.info(f"Temporary CSV file deleted at {file_path}")
 
         return rMin_rMax_MA_values
 
@@ -278,6 +278,7 @@ async def Incoming_stream_processing_to_get_DataTable(request: Request):
         new_file = Data_File(file_path)
         rMin_rMax_MA_values = new_file.info_R_in_MA_for_database()
         os.unlink(file_path)
+        logger.info(f"Temporary TXT file deleted at {file_path}")
         return rMin_rMax_MA_values
 
     except Exception as e:
@@ -321,6 +322,7 @@ async def Incoming_stream_processing_to_get_DataTable(request: Request):
         new_file = Data_File(file_path)
         rMin_rMax_temperature_values = new_file.info_for_database()
         os.unlink(file_path)
+        logger.info(f"Temporary CSV file deleted at {file_path}")
         return rMin_rMax_temperature_values
 
     except Exception as e:
@@ -364,6 +366,7 @@ async def Incoming_stream_processing_to_get_DataTable(request: Request):
         new_file = Data_File(file_path)
         rMin_rMax_temperature_values = new_file.info_for_database()
         os.unlink(file_path)
+        logger.info(f"Temporary TXT file deleted at {file_path}")
         return rMin_rMax_temperature_values
 
     except Exception as e:
@@ -371,7 +374,6 @@ async def Incoming_stream_processing_to_get_DataTable(request: Request):
         logger.error(f"Error processing TXT overall database values: {e}")
         logger.error(traceback.format_exc())
         return {"error": str(e), "problematic_file": error_file_path}
-
 
 
 @app.post(
@@ -407,6 +409,7 @@ async def validation_of_incoming_file(request: Request):
         new_file = Data_File(file_path)
         validation_status = new_file.file_validation()
         os.unlink(file_path)
+        logger.info(f"Temporary CSV file deleted at {file_path}")
         return validation_status
 
     except Exception as e:
@@ -449,6 +452,7 @@ async def validation_of_incoming_file(request: Request):
         new_file = Data_File(file_path)
         validation_status = new_file.file_validation()
         os.unlink(file_path)
+        logger.info(f"Temporary TXT file deleted at {file_path}")
         return validation_status
 
     except Exception as e:
@@ -456,7 +460,6 @@ async def validation_of_incoming_file(request: Request):
         logger.error(f"Error during TXT validation: {e}")
         logger.error(traceback.format_exc())
         return {"error": str(e), "problematic_file": error_file_path}
-
 
 
 @app.post("/resistance/validation/file")
@@ -507,7 +510,7 @@ async def validation_of_incoming_file(file: UploadFile):
         logger.error(f"Error during file validation: {e}")
         logger.error(traceback.format_exc())
         return {"error": str(e), "problematic_file": error_file_path}
-            
+
 
 # Run the FastAPI application:
 
