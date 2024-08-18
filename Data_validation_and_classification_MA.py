@@ -116,8 +116,9 @@ class Data_File:
 
     def find_type_and_keyword(self):
         count_valid_Data_File = 0  # count_valid_data_file is initialized but not used in the provided code.
-
+        # Check if the file at the given path exists
         if not os.path.isfile(self.file_path):
+            # Raise an error if the file does not exist, with a message showing the file path
             raise FileNotFoundError(f"The file does not exist: {self.file_path}")
 
         count_l = 0  # tracking the number of line
@@ -302,8 +303,8 @@ class Data_File:
                 further evaluations!
                 """
                 try:
-                    # Convert Data to Numeric and Validate Columns
-                    df = df.apply(pd.to_numeric, errors='coerce')  # Coerce errors to NaN
+                    # Convert all values to numeric, setting non-convertible values to NaN
+                    df = df.apply(pd.to_numeric, errors='coerce')  # Coerce errors to NaN instead of raise error
                     # df.apply applies a function along an axis of the DataFrame.
                     # pd.to_numeric is a pandas function that attempts to convert values to numeric types.
                     # df = df.apply(pd.to_numeric)
@@ -623,7 +624,7 @@ class Data_File:
                 count_l += 1
             """
             #Final Adjustments to Skip List:
-            If there are entries in the skip list, appends an additional row index to skip (one more than the last entry).
+            If there are entries in the skip list, appends an additional row index to skip(one more than the last entry)
             If the skip list is empty, appends 0 to skip the first row.
             """
             if len(skip_list) >= 1:
@@ -745,18 +746,22 @@ class Data_File:
         # the keywords.
         created_column_name = self.create_column_name()
 
+        # Debug prints to inspect the contents of same_dict and created_column_name
+        print("Debug: same_dict:", same_dict)
+        print("Debug: created_column_name:", created_column_name)
+
         """
         Determine Column Names Based on Keywords:
         If same_dict has more than one key (indicating multiple floatable columns) and
         no keywords were found (same_dict["keyword"] == 0), but created_column_name is not empty,
         assigns created_column_name to column_name.
         """
-        if len(same_dict) > 1 and same_dict["keyword"] == 0 and len(created_column_name) > 0:
+        if len(same_dict) > 1 and same_dict.get("keyword", 0) == 0 and len(created_column_name) > 0:
             column_name = created_column_name
 
         # If same_dict has more than one key and keywords were found (same_dict["keyword"] > 0),
         # calls find_column_name to identify column names based on the keywords and assigns it to column_name.
-        elif len(same_dict) > 1 and same_dict["keyword"] > 0:
+        elif len(same_dict) > 1 and same_dict.get("keyword", 0) > 0:
             column_name = self.find_column_name()
 
         # If neither condition is met (indicating the file is not valid for the intended categorization),
@@ -992,7 +997,6 @@ class Data_File:
                 df_MA = df.groupby(["x", "y"]).agg({'R': ['median', 'mean', 'min', 'max']}).sort_values(['y', 'x'],
                                                                                                         ascending=[True,
                                                                                                                    True])
-
                 return df_MA, df
             else:
                 raise ValueError('The column related to coordinate was not found')
@@ -1126,7 +1130,6 @@ class Data_File:
     """
 
     def info_R_in_MA_for_database(self):
-        # Get Measurement Type and Min/Max Resistance Data
         global dict_cords
         same_dict = self.find_type_and_keyword()
         # Depending on the values in same_dict, it determines the appropriate column names.
@@ -1571,21 +1574,21 @@ class Data_File:
         return data_ana
 
 
+"""
 # testing Data_File:
-
 def test_data_file():
-    file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/4PP_0004858_Fe-Co-O_Wid.csv"
+    # file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/4PP_0004858_Fe-Co-O_Wid.csv"
     # file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/4PP_0004858_Fe-Co-O_Wid_tab.txt"
     # file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/4PP_0004858_Fe-Co-O_Wid_tab_with-str.txt"
     # file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/4PP_0004858_Messprotokoll_Fe-Co-O.txt"
-    # file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/2020-11-09_1542_Cr-Mn-Fe-Co-Ni_Si + SiO2_49171_161202-K2-1 v5_Wid_000044642.xlsx"
-    # file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/0005350_HTTS_4PP_all.xlsx"
-    # file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/0008088_HTTS_4PP_Resistance.xlsx"
-    # file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/0008088_HTTS_4PP_Resistance_ok.xlsx"
-    # file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/MA_1_currents.xlsx"
-    # file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/MA_1_resistances.xlsx"
+    # file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/2020-11-09_1542_Cr-Mn-Fe-Co-Ni_Si + SiO2_49171_161202-K2-1 v5_Wid_000044642.csv"
+    # file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/0005350_HTTS_4PP_all.csv"
+    # file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/0008088_HTTS_4PP_Resistance.csv"
+    # file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/0008088_HTTS_4PP_Resistance_ok.csv"
+    # file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/MA_1_currents.csv"
+    # file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/MA_1_resistances.csv"
     # file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/no column found.zip"
-    # file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/results_RT.xlsx"
+    # file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/results_RT.csv"
 
     try:
         data_file_instance = Data_File(file_path)
@@ -1596,9 +1599,9 @@ def test_data_file():
 
 # Call the test function
 test_data_file()
-
 """
 
+"""
 # Testing function find_type_and_keyword
 def test_find_type_and_keyword(file_path):
     try:
@@ -1612,7 +1615,7 @@ def test_find_type_and_keyword(file_path):
 
 
 # Test with the uploaded file
-uploaded_file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/4PP_0004858_Fe-Co-O_Wid.xlsx"
+uploaded_file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/4PP_0004858_Fe-Co-O_Wid.csv"
 test_find_type_and_keyword(uploaded_file_path)
 """
 
@@ -1628,10 +1631,10 @@ def test_create_column_name(file_path):
     print(f"Created Column Names: {created_column_name}")
     return created_column_name
 
-# Example usage
-file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/4PP_0004858_Messprotokoll_Fe-Co-O.txt"
-test_create_column_name(file_path)
 
+# Example usage
+file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/MA_1_resistances.csv"
+test_create_column_name(file_path)
 """
 
 """
@@ -1645,10 +1648,10 @@ def test_file_validation(file_path):
     print(f"Validation Result: {validation_result}")
     return validation_result
 
-
 # Example usage
 file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/4PP_0004858_Messprotokoll_Fe-Co-O.txt"
 test_file_validation(file_path)
+
 """
 
 """
@@ -1665,12 +1668,13 @@ def test_file_temperature(file_path):
 
 
 # Example usage
-file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/4PP_0004858_Fe-Co-O_Wid_tab.txt"
+file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/no column found.zip"
 test_file_temperature(file_path)
+
 """
 
 """
-Testing function find_skiprows:
+# Testing function find_skiprows:
 def test_find_skiprows(file_path, expected_skip_list, expected_col_name):
     data_file_instance = Data_File(file_path)
     skip_list, col_name = data_file_instance.find_skiprows()
@@ -1687,7 +1691,6 @@ def test_find_skiprows(file_path, expected_skip_list, expected_col_name):
     assert col_name == expected_col_name, f"Expected {expected_col_name} but got {col_name}"
     print("Test passed!")
 
-
 # Example usage
 file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/4PP_0004858_Fe-Co-O_Wid_tab.txt" # Replace with the actual file path
 expected_skip_list = [0, 1, 3]  # Expected skip list based on your test file content
@@ -1697,7 +1700,7 @@ test_find_skiprows(file_path, expected_skip_list, expected_col_name)
 """
 
 """
-# Testing function find_column_name:
+# Testing function find_column_name: works correct
 def test_find_column_name(self):
     data_file_instance = Data_File(file_path)
     column_names = data_file_instance.find_column_name()
@@ -1708,12 +1711,12 @@ def test_find_column_name(self):
 
 
 # Example usage
-file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/4PP_0004858_Fe-Co-O_Wid_tab.txt"
+file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/4PP_0004858_Messprotokoll_Fe-Co-O.txt"
 test_find_column_name(file_path)
 """
-
 """
-# Testing function for file_division
+
+# Testing function for file_division give some error
 def test_file_division(file_path):
     data_file_instance = Data_File(file_path)
     df_measurement_type = data_file_instance.file_division()
@@ -1721,11 +1724,11 @@ def test_file_division(file_path):
     # Print output for inspection
     print("Measurement Type DataFrame:\n", df_measurement_type)
     return df_measurement_type
-
-
+    
 # Example usage
-file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/4PP_0004858_Messprotokoll_Fe-Co-O.txt"
+file_path = " "
 test_file_division(file_path)
+
 """
 
 """  
@@ -1753,22 +1756,13 @@ test_find_min_max_resistance_in_MA(file_path)
 def test_find_coordinate(file_path):
     # Create an instance of the Data_File class with the provided file path
     data_file_instance = Data_File(file_path)
-
-    try:
-        # Call the find_coordinate method
-        df_cords = data_file_instance.find_coordinate()
-
-        # Return the DataFrame for further inspection or assertions
-        return df_cords
-
-    except Exception as e:
-        # Print the exception if any occurs during the method call
-        print(f"Exception occurred while processing file {file_path}: {e}")
-        return None
+    df_cords = data_file_instance.find_coordinate()
+    # Return the DataFrame for further inspection or assertions
+    return df_cords
 
 
 # Example usage with different file paths
-file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/0005350_HTTS_4PP_all.csv"
+file_path = "C:/Users/Shirin/Desktop/Hiwi-MDI/test code/4PP_0004858_Fe-Co-O_Wid.csv"
 test_find_coordinate(file_path)
 """
 
