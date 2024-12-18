@@ -1,87 +1,69 @@
-from fastapi import FastAPI, Request, UploadFile
-# provides methods for handling and validating data files
-from Data_validation_and_classification_MA import Data_File
-# copying, moving files,removing directories and their contents.
+from fastapi import FastAPI, Path, Query, HTTPException, status, File, UploadFile, Request
+from fastapi.encoders import jsonable_encoder
+from typing import Optional, Annotated
+#from pydantic import BaseModel
+from Data_validation_and_classification_MA import data_file
+from cyclic_temperature_dependent import TemperatureFileProcessor
 import shutil
-# reading and writing to the file system
 import os
-# creating temporary files and directories
+#import io
+from io import StringIO
 import tempfile
-# record events, errors, and other information during the execution.
+#import mimetypes
+import re
 import logging
-# handle dates and times
 import datetime as dt
-# extracting and debugging, help to understand the flow of the program and locate where errors occur.
-import traceback
-
-# specifying the path where log files will be stored. "./" prefix means "current directory"
-log_directory = './Logs'
-# Ensure the log directory exists.
-os.makedirs(log_directory, exist_ok=True)
+import magic
+import json
+from fastapi.responses import JSONResponse
 
 
-# creating a logger for each request:
-def create_logger():
+def setup_logger(log_dir: str = "./Loggs") -> logging.Logger:
     """
-    This function is designed to create a logger instance with a unique name based on the current timestamp. This
-    logger writes log messages to a file in a specified log directory. It gets the current date and time and
-    constructs the log file path by combining the log directory path and the timestamp.
-    It sets the logging level to capture all messages.
-    file handler that writes log messages to the constructed log file path is created.
-    Finally, it adds the handler to the logger, directing any log messages sent to the logger to be written to the file.
-    The function returns the configured logger instance, ready to log messages for the specific request.
+    Setup a logger that creates a unique log file for each execution.
+
+    :param log_dir: Directory to store log files.
+    :return: Configured logger instance.
     """
-    # timestamp is a numeric representation of time.it gets the current date and time and formats the date and time
-    # as a string.
-    timestamp = dt.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    # Constructing the Log File Path by combining the log directory and the timestamp.
-    log_file_path = f"{log_directory}/{timestamp}.log"
-    """By using timestamp as the name, each call to create_logger generates a logger with a unique name based on the 
-    current date and time."""
-    # Creates a new logger instance named after the timestamp. This ensures that each logger is unique.
-    # Loggers expose the interface that application code directly uses.
-    logger = logging.getLogger(timestamp)
-    # the logger will capture all messages at the INFO level and above.
+    os.makedirs(log_dir, exist_ok=True)
+
+    # Generate a unique log file name based on current date and time
+    timestamp = dt.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    log_file = os.path.join(log_dir, f"{timestamp}.log")
+
+    # Set up the logger
+    logger = logging.getLogger("execution_logger")
     logger.setLevel(logging.INFO)
-    # defining format of the log messages including the timestamp and the log message.
-    # Formatter specify the layout of log records in the final output.
-    formatter = logging.Formatter('%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
-    # writing log messages to the file.
-    # Handlers send the log message (created by loggers) to the specified log file.
-    file_handler = logging.FileHandler(log_file_path)
-    # ensures that each log message is formatted according to the formatter defined earlier.
-    file_handler.setFormatter(formatter)
-    # Adds the file handler to the logger, so any log messages sent to the logger will be written to the file.
-    logger.addHandler(file_handler)
+
+    # Avoid duplicate handlers
+    if not logger.handlers:
+        handler = logging.FileHandler(log_file)
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s - %(levelname)s - %(message)s",
+                datefmt="%y-%b-%d %H:%M:%S",
+            )
+        )
+        logger.addHandler(handler)
 
     return logger
 
 
-"""
-Creating an Instance of FastAPI:
-a new FastAPI application instance will be created.
-And the URL path for accessing the automatically generated API documentation
-"""
-app = FastAPI(docs_url="/")
+# Set up a single unique logger for this execution
+logger = setup_logger()
 
-# POST: It means the user wants to send data to the API (to create something, or store something in the database).
-"""it defines an endpoint responding to HTTP POST requests.
-it processes incoming data including handling temporary file creation, logging, and error handling.
-"""
+app = FastAPI(docs_url="/")
 
 
 @app.post(
     "/resistance/csv/data/tablebody",
     openapi_extra={
-        # request body is in application/octet-stream format:binary files
         "requestBody": {
-            # content type and structure of the request body
             "content": {
-                # binary files format
                 "application/octet-stream": {
                     "schema": {
-                        # schema of the data is an array
                         "type": "array",
+
                     }
                 }
             }
@@ -89,73 +71,63 @@ it processes incoming data including handling temporary file creation, logging, 
     },
 )
 async def Incoming_stream_processing_to_get_DataTable(request: Request):
-    """
-    Handles incoming CSV data requests, processes the data, and returns a DataTable. It enables the program to manage
-    other tasks concurrently while waiting for operations such as reading a request body to complete. The function
-    reads and processes the request body, which contains the data sent by the user. A logger instance is created to
-    log messages specific to this request. it reads incoming request and store it in byte_data as raw bytes. It then
-    creates a temporary file to store the uploaded data. This file is created with a .csv suffix and is not
-    automatically deleted when closed. The raw data from the request body is written to this temporary file.
-    temporary file path is stored in the file_path variable. an instance of Data_File is created using the temporary
-    file path. table_of_df method is called to process the file. If an exception occurs, it is caught and assigned to
-    the variable e. full traceback of the exception is logged to provide information about where the error occurred.
-    Finally, regardless of whether an exception was raised, if temporary file was successfully created, the temporary
-    file will be deleted from the filesystem.
-    """
-    # Variable Initialization
-    # storing the path of the temporary file created to hold the uploaded data
-    file_path = None
-    # get a logger instance which will be used to log messages specific to this request
-    logger = create_logger()
-    # Processing the Incoming Request:
-    # handle potential exceptions that might occur during the execution
+    logger.info("Incoming request received")
+
+    # Read file bytes from the request
+    byte_data = await request.body()
+    logger.info(f"File data read from request body successfully.")
+
+    # Detect file type using python-magic
+    file_type = magic.from_buffer(byte_data, mime=True)
+    logger.info(f"Detected file type: {file_type}")
+
+    # Map detected file type to appropriate extensions
+    extension_map = {
+        "text/csv": ".csv",
+        "application/vnd.ms-excel": ".xls",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+        "application/json": ".json",
+    }
+    # Fallback to .csv if the type is unknown
+    extension = extension_map.get(file_type, ".csv")
+    logger.info(f"File extension determined as: {extension}")
+
+    # Create a temporary file with the determined extension
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=extension)
+
     try:
-        # reads the entire body of the incoming request and stores it in byte_data as raw bytes
-        byte_data = await request.body()
-
-        # Temporary File Creation and Logging:
-        # create a temporary file that will not be automatically deleted (delete=False) when closed.
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
-        # writes the received byte_data (the raw data from the request body) to the temporary file
+        # Write data to temp file and close it
         temp_file.write(byte_data)
-        # closes the temporary file, ensuring that all data is written and the file is properly saved.
         temp_file.close()
-        # stores the path of the temporary file
         file_path = temp_file.name
-
-        # Logs an informational message indicating that a CSV data table request was received
-        logger.info("Received CSV data table request.")
-        # Logs the path to the temporary file that was created
         logger.info(f"Temporary file created: {file_path}")
 
-        # Creates an instance of Data_File with the temporary file path.
-        new_file = Data_File(file_path)
-        # Calls the table_of_df method of the Data_File instance returning table or DataFrame.
-        table = new_file.table_of_df()
-        # deletes the temporary file from the filesystem
+        # Use your validation logic on the saved file
+        new_file = data_file(file_path)
+        cyclic_temp_file = TemperatureFileProcessor(file_path)
+        logger.info("Starting data validation and processing.")
+
+        same_col_dict = new_file.find_type_and_keyword()
+        logger.info(f"same_col_dict contents: {same_col_dict}")
+
+        no_col = list(same_col_dict.keys())[1]
+        logger.info(f"Column type detected: {no_col}")
+
+        if no_col == 343:
+            logger.info("Processing data as cyclic temperature file.")
+            table = cyclic_temp_file.table_of_df_temp()
+        else:
+            logger.info("Processing data as general file.")
+            table = new_file.table_of_df()
+
+        logger.info("Data processing completed successfully.")
+
+    finally:
+        # Ensure temp file is deleted after processing
         os.unlink(file_path)
-        logger.info(f"Temporary CSV file deleted at {file_path}")
-        return table
+        logger.info(f"Temporary file deleted: {file_path}")
 
-    # Exception Handling
-    # Catches any exception that occurs within the try block and assigns the exception object to the variable e
-    except Exception as e:
-        # Sets error_file_path to a default message.
-        error_file_path = "Temporary file not created"
-        # Logs an error message indicating that an error occurred
-        logger.error(f"Error processing CSV data table: {e}")
-
-        """ # Logs the full traceback of the exception, providing information about where the error occurred.
-        It provides information about the error type, error message, and the sequence of function calls that led 
-        to the error."""
-        logger.error(traceback.format_exc())  # format_exc(): Formatting the Exception
-        # Returns a JSON response containing the error message and the path to the problematic file.
-        return {"error": str(e), "problematic_file": error_file_path}
-
-
-"""it defines an endpoint responding to HTTP POST requests.
-it processes incoming data including handling temporary file creation, logging, and error handling.
-"""
+    return table
 
 
 @app.post(
@@ -166,6 +138,7 @@ it processes incoming data including handling temporary file creation, logging, 
                 "application/octet-stream": {
                     "schema": {
                         "type": "array",
+
                     }
                 }
             }
@@ -173,36 +146,22 @@ it processes incoming data including handling temporary file creation, logging, 
     },
 )
 async def Incoming_stream_processing_to_get_DataTable(request: Request):
-    """
-        Handles incoming TXT data requests, processes the data, and returns a DataTable.
-    """
-    file_path = None
-    logger = create_logger()
-    try:
-        byte_data = await request.body()
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.txt')
-        temp_file.write(byte_data)
-        temp_file.close()
-        file_path = temp_file.name
+    byte_data = await request.body()
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.txt')
+    temp_file.write(byte_data)
+    temp_file.close()
+    file_path = temp_file.name
 
-        logger.info("Received TXT data table request.")
-        logger.info(f"Temporary file created: {file_path}")
+    new_file = data_file(file_path)
+    data_table = new_file.table_of_df()
+    os.unlink(file_path)
 
-        new_file = Data_File(file_path)
-        data_table = new_file.table_of_df()
-        os.unlink(file_path)
-        logger.info(f"Temporary TXT file deleted at {file_path}")
-        return data_table
-
-    except Exception as e:
-        error_file_path = "Temporary file not created"
-        logger.error(f"Error processing TXT data table: {e}")
-        logger.error(traceback.format_exc())
-        return {"error": str(e), "problematic_file": error_file_path}
+    return data_table
 
 
 @app.post(
     "/resistance/csv/data/databasevaluesbody",
+    response_class=JSONResponse,
     openapi_extra={
         "requestBody": {
             "content": {
@@ -216,33 +175,70 @@ async def Incoming_stream_processing_to_get_DataTable(request: Request):
     },
 )
 async def Incoming_stream_processing_to_get_DataTable(request: Request):
-    """
-        Handles incoming CSV database values requests, processes the data, and returns rMin_rMax_MA values.
-    """
-    file_path = None
-    logger = create_logger()
+    logger.info("Incoming request received")
     try:
         byte_data = await request.body()
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
-        temp_file.write(byte_data)
-        temp_file.close()
-        file_path = temp_file.name
+        file_size = len(byte_data)
+        logger.info(f"File data read from request body successfully. File size: {file_size} bytes")
 
-        logger.info("Received CSV database values request.")
-        logger.info(f"Temporary file created: {file_path}")
+        # Detect file type using python-magic
+        file_type = magic.from_buffer(byte_data, mime=True)
+        logger.info(f"Detected file type: {file_type}")
 
-        new_file = Data_File(file_path)
-        rMin_rMax_MA_values = new_file.info_R_in_MA_for_database()
-        os.unlink(file_path)
-        logger.info(f"Temporary CSV file deleted at {file_path}")
+        # Map detected file type to appropriate extensions
+        extension_map = {
+            "text/csv": ".csv",
+            "application/vnd.ms-excel": ".xls",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+            "application/json": ".json",
+        }
+        extension = extension_map.get(file_type, ".csv")
+        logger.info(f"File extension determined as: {extension}")
 
-        return rMin_rMax_MA_values
+        # Create a temporary file with the determined extension
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=extension)
+
+        try:
+            temp_file.write(byte_data)
+            temp_file.close()
+            file_path = temp_file.name
+            logger.info(f"Temporary file created: {file_path}")
+
+            # Use your validation logic on the saved file
+            new_file = data_file(file_path)
+            cyclic_temp_file = TemperatureFileProcessor(file_path)
+            logger.info("Starting data validation and processing.")
+            try:
+                same_col_dict = new_file.find_type_and_keyword()
+            except Exception as e:
+                logger.error(f"Error during `find_type_and_keyword`: {str(e)}", exc_info=True)
+                raise HTTPException(status_code=500, detail="Failed to process the file.")
+            logger.info(f"same_col_dict contents: {same_col_dict}")
+            no_col = list(same_col_dict.keys())[1]
+            logger.info(f"Column type detected: {no_col}")
+
+            if no_col == 343:
+                logger.info("Processing data as cyclic temperature file.")
+                rMin_rMax_MA_values = cyclic_temp_file.info_R_in_MA_for_database_temp()
+            else:
+                logger.info("Processing data as general file.")
+                rMin_rMax_MA_values = new_file.info_R_in_MA_for_database()
+
+            logger.info("Data processing completed successfully.")
+        finally:
+            os.unlink(file_path)
+            logger.info(f"Temporary file deleted: {file_path}")
+
+        logger.info(f"Response JSON: {json.dumps(rMin_rMax_MA_values, indent=4)}")
+        # return rMin_rMax_MA_values
+        # return json.dumps(rMin_rMax_MA_values, indent=4)
+        # return rMin_rMax_MA_values
+
+
 
     except Exception as e:
-        error_file_path = "Temporary file not created"
-        logger.error(f"Error processing CSV database values: {e}")
-        logger.error(traceback.format_exc())
-        return {"error": str(e), "problematic_file": error_file_path}
+        logger.error(f"Error during processing: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="An error occurred during processing.")
 
 
 @app.post(
@@ -253,6 +249,7 @@ async def Incoming_stream_processing_to_get_DataTable(request: Request):
                 "application/octet-stream": {
                     "schema": {
                         "type": "array",
+
                     }
                 }
             }
@@ -260,42 +257,28 @@ async def Incoming_stream_processing_to_get_DataTable(request: Request):
     },
 )
 async def Incoming_stream_processing_to_get_DataTable(request: Request):
-    """
-       Handles incoming TXT database values requests, processes the data, and returns rMin_rMax_MA values.
-    """
-    file_path = None
-    logger = create_logger()
-    try:
-        byte_data = await request.body()
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.txt')
-        temp_file.write(byte_data)
-        temp_file.close()
-        file_path = temp_file.name
+    byte_data = await request.body()
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.txt')
+    temp_file.write(byte_data)
+    temp_file.close()
+    file_path = temp_file.name
 
-        logger.info("Received TXT database values request.")
-        logger.info(f"Temporary file created: {file_path}")
+    new_file = data_file(file_path)
+    rMin_rMax_MA_values = new_file.info_R_in_MA_for_database()
+    os.unlink(file_path)
 
-        new_file = Data_File(file_path)
-        rMin_rMax_MA_values = new_file.info_R_in_MA_for_database()
-        os.unlink(file_path)
-        logger.info(f"Temporary TXT file deleted at {file_path}")
-        return rMin_rMax_MA_values
-
-    except Exception as e:
-        error_file_path = "Temporary file not created"
-        logger.error(f"Error processing TXT database values: {e}")
-        logger.error(traceback.format_exc())
-        return {"error": str(e), "problematic_file": error_file_path}
+    return rMin_rMax_MA_values
 
 
 @app.post(
-    "/resistance/csv/Overall/data/databasevaluesbody",
+    "/resistance/csv/overall/data/databasevaluesbody",
     openapi_extra={
         "requestBody": {
             "content": {
                 "application/octet-stream": {
                     "schema": {
                         "type": "array",
+
                     }
                 }
             }
@@ -303,34 +286,47 @@ async def Incoming_stream_processing_to_get_DataTable(request: Request):
     },
 )
 async def Incoming_stream_processing_to_get_DataTable(request: Request):
-    """
-        Handles incoming CSV overall database values requests, processes the data, and returns rMin_rMax_temperature values.
-    """
-    file_path = None
-    logger = create_logger()
-    try:
+    # Read file bytes from the request
+    byte_data = await request.body()
 
-        byte_data = await request.body()
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
+    # Detect file type using python-magic
+    file_type = magic.from_buffer(byte_data, mime=True)
+
+    # Map detected file type to appropriate extensions
+    extension_map = {
+        "text/csv": ".csv",
+        "application/vnd.ms-excel": ".xls",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+        "application/json": ".json",
+    }
+    # Fallback to .csv if the type is unknown
+    extension = extension_map.get(file_type, ".csv")
+
+    # Create a temporary file with the determined extension
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=extension)
+
+    try:
+        # Write data to temp file and close it
         temp_file.write(byte_data)
         temp_file.close()
         file_path = temp_file.name
+        print("Temporary file saved as:", file_path)
 
-        logger.info("Received CSV overall database values request.")
-        logger.info(f"Temporary file created: {file_path}")
+        # Use your validation logic on the saved file
+        new_file = data_file(file_path)
+        cyclic_temp_file = TemperatureFileProcessor(file_path)
+        same_col_dict = new_file.find_type_and_keyword()
+        no_col = list(same_col_dict.keys())[1]
+        if no_col == 343:
+            rMin_rMax_MA_overall = cyclic_temp_file.info_for_database_temp()
+        else:
+            rMin_rMax_MA_overall = new_file.info_for_database()
 
-        new_file = Data_File(file_path)
-        rMin_rMax_temperature_values = new_file.info_for_database()
+    finally:
+        # Ensure temp file is deleted after processing
         os.unlink(file_path)
-        logger.info(f"Temporary CSV file deleted at {file_path}")
-        return rMin_rMax_temperature_values
 
-    except Exception as e:
-        error_file_path = "Temporary file not created"
-
-        logger.error(f"Error processing CSV overall database values: {e}")
-        logger.error(traceback.format_exc())
-        return {"error": str(e), "problematic_file": error_file_path}
+    return rMin_rMax_MA_overall
 
 
 @app.post(
@@ -341,6 +337,7 @@ async def Incoming_stream_processing_to_get_DataTable(request: Request):
                 "application/octet-stream": {
                     "schema": {
                         "type": "array",
+
                     }
                 }
             }
@@ -348,32 +345,46 @@ async def Incoming_stream_processing_to_get_DataTable(request: Request):
     },
 )
 async def Incoming_stream_processing_to_get_DataTable(request: Request):
-    """
-        Handles incoming TXT overall database values requests, processes the data, and returns rMin_rMax_temperature values.
-    """
-    file_path = None
-    logger = create_logger()
-    try:
-        byte_data = await request.body()
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.txt')
-        temp_file.write(byte_data)
-        temp_file.close()
-        file_path = temp_file.name
+    byte_data = await request.body()
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.txt')
+    temp_file.write(byte_data)
+    temp_file.close()
+    file_path = temp_file.name
 
-        logger.info("Received TXT overall database values request.")
-        logger.info(f"Temporary file created: {file_path}")
+    new_file = data_file(file_path)
+    rMin_rMax_temperature_values = new_file.info_for_database()
+    os.unlink(file_path)
 
-        new_file = Data_File(file_path)
-        rMin_rMax_temperature_values = new_file.info_for_database()
-        os.unlink(file_path)
-        logger.info(f"Temporary TXT file deleted at {file_path}")
-        return rMin_rMax_temperature_values
+    return rMin_rMax_temperature_values
 
-    except Exception as e:
-        error_file_path = "Temporary file not created"
-        logger.error(f"Error processing TXT overall database values: {e}")
-        logger.error(traceback.format_exc())
-        return {"error": str(e), "problematic_file": error_file_path}
+
+@app.post(
+    "/resistance/txt/Overall/data/databasevaluesbody",
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/octet-stream": {
+                    "schema": {
+                        "type": "array",
+
+                    }
+                }
+            }
+        }
+    },
+)
+async def Incoming_stream_processing_to_get_DataTable(request: Request):
+    byte_data = await request.body()
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.txt')
+    temp_file.write(byte_data)
+    temp_file.close()
+    file_path = temp_file.name
+
+    new_file = data_file(file_path)
+    rMin_rMax_temperature_values = new_file.info_for_database()
+    os.unlink(file_path)
+
+    return rMin_rMax_temperature_values
 
 
 @app.post(
@@ -391,32 +402,41 @@ async def Incoming_stream_processing_to_get_DataTable(request: Request):
     },
 )
 async def validation_of_incoming_file(request: Request):
-    """
-        Handles incoming CSV file validation requests, processes the file, and returns validation status.
-    """
-    file_path = None
-    logger = create_logger()
+    # Read file bytes from the request
+    byte_data = await request.body()
+
+    # Detect file type using python-magic
+    file_type = magic.from_buffer(byte_data, mime=True)
+
+    # Map detected file type to appropriate extensions
+    extension_map = {
+        "text/csv": ".csv",
+        "application/vnd.ms-excel": ".xls",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+        "application/json": ".json",
+    }
+    # Fallback to .csv if the type is unknown
+    extension = extension_map.get(file_type, ".csv")
+
+    # Create a temporary file with the determined extension
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=extension)
+
     try:
-        byte_data = await request.body()
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
+        # Write data to temp file and close it
         temp_file.write(byte_data)
         temp_file.close()
         file_path = temp_file.name
+        print("Temporary file saved as:", file_path)
 
-        logger.info("Received CSV validation request.")
-        logger.info(f"Temporary file created: {file_path}")
-
-        new_file = Data_File(file_path)
+        # Use your validation logic on the saved file
+        new_file = data_file(file_path)
         validation_status = new_file.file_validation()
-        os.unlink(file_path)
-        logger.info(f"Temporary CSV file deleted at {file_path}")
-        return validation_status
 
-    except Exception as e:
-        error_file_path = "Temporary file not created"
-        logger.error(f"Error during CSV validation: {e}")
-        logger.error(traceback.format_exc())
-        return {"error": str(e), "problematic_file": error_file_path}
+    finally:
+        # Ensure temp file is deleted after processing
+        os.unlink(file_path)
+
+    return validation_status
 
 
 @app.post(
@@ -427,6 +447,7 @@ async def validation_of_incoming_file(request: Request):
                 "application/octet-stream": {
                     "schema": {
                         "type": "array",
+
                     }
                 }
             }
@@ -434,95 +455,26 @@ async def validation_of_incoming_file(request: Request):
     },
 )
 async def validation_of_incoming_file(request: Request):
-    """
-        Handles incoming TXT file validation requests, processes the file, and returns validation status.
-    """
-    file_path = None
-    logger = create_logger()
-    try:
-        byte_data = await request.body()
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.txt')
-        temp_file.write(byte_data)
-        temp_file.close()
-        file_path = temp_file.name
+    byte_data = await request.body()
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.txt')
+    temp_file.write(byte_data)
+    temp_file.close()
+    file_path = temp_file.name
 
-        logger.info("Received TXT validation request.")
-        logger.info(f"Temporary file created: {file_path}")
-
-        new_file = Data_File(file_path)
-        validation_status = new_file.file_validation()
-        os.unlink(file_path)
-        logger.info(f"Temporary TXT file deleted at {file_path}")
-        return validation_status
-
-    except Exception as e:
-        error_file_path = "Temporary file not created"
-        logger.error(f"Error during TXT validation: {e}")
-        logger.error(traceback.format_exc())
-        return {"error": str(e), "problematic_file": error_file_path}
+    new_file = data_file(file_path)
+    validation_status = new_file.file_validation()
+    os.unlink(file_path)
+    return validation_status
 
 
 @app.post("/resistance/validation/file")
-# function accepts a file as an argument. UploadFile is a class for handling file uploads.
 async def validation_of_incoming_file(file: UploadFile):
-    """
-        Handles file upload validation requests, processes the uploaded file, and returns validation status.
-    """
-    # This will later hold the path of the uploaded file.
-    file_path = None
-    # Initializes a logger for logging messages related to this request.
-    logger = create_logger()
-    # Processing the Uploaded File
-    try:
-        # Assigns the name of the uploaded file to file_path
-        file_path = file.filename
-        # a log file path is constructed for the uploaded file.
-        log_file_path = f"{log_directory}/{file.filename}.log"
-        # reinitializes the logger to log to the uploaded file for this request.
-        logger = create_logger(log_file_path)
-        # Logs an informative message indicating that a file validation request has been received by server
-        logger.info(f"Received file validation request for: {file.filename}")
-        # Saving the Uploaded File: opens a new file on the server with the same name as the uploaded file for
-        # writing in binary mode ("wb": write binary). The with statement ensures that the file is properly closed
-        # after writing.
-        with open(file_path, "wb") as buffer:
-            # Copies the contents of the uploaded file (file.file) to the newly opened file (buffer)
-            # file.file is a file-like object representing the uploaded file
-            # buffer is the file object opened on the server
-            shutil.copyfileobj(file.file, buffer)
-        # Logs a message indicating that the uploaded file has been saved to a temporary location on the server.
-        logger.info(f"Temporary file saved: {file_path}")
+    file_path = file.filename
 
-        # File Validation
-        # Creates an instance of Data_File with the path of the saved file.
-        new_file = Data_File(file_path)
-        # Calls a method file_validation on the Data_File instance to validate the file.
-        validation_status = new_file.file_validation()
-        # Logs the result of the file validation.
-        logger.info(f"Validation result for {file.filename}: {validation_status}")
-        # Returns the validation status as the response.
-        os.unlink(file_path)
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
 
-        return validation_status
+    new_file = data_file(file_path)
+    validation_status = new_file.file_validation()
+    return validation_status
 
-    except Exception as e:
-        error_file_path = "Temporary file not created"
-        logger.error(f"Error during file validation: {e}")
-        logger.error(traceback.format_exc())
-        return {"error": str(e), "problematic_file": error_file_path}
-
-
-# Run the FastAPI application:
-
-# checks if the current module is being run as the main program
-if __name__ == "__main__":
-    # This line retrieves the root logger instance in Python's logging module
-    logger = logging.getLogger()
-    # checks if the root logger has any handlers attached.
-    # it means there are one or more handlers attached to the root logger.
-    if logger.handlers:
-        # a loop over each handler attached to the root logger.
-        for handler in logger.handlers:
-            # ensures that all logging output has been written to the respective destination(a file).
-            # ensures that all log messages have been saved to disk and nothing is left in a buffer.
-            handler.flush()
