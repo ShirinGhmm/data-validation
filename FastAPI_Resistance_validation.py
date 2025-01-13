@@ -15,7 +15,12 @@ import logging
 import datetime as dt
 import magic
 import json
+import pandas as pd
 from fastapi.responses import JSONResponse
+import filetype
+import mimetypes
+import csv
+
 
 
 def setup_logger(log_dir: str = "./Loggs") -> logging.Logger:
@@ -56,7 +61,7 @@ app = FastAPI(docs_url="/")
 
 
 @app.post(
-    "/resistance/csv/data/tablebody",
+    "/resistance/data/tablebody",
     openapi_extra={
         "requestBody": {
             "content": {
@@ -70,17 +75,15 @@ app = FastAPI(docs_url="/")
         }
     },
 )
-async def Incoming_stream_processing_to_get_DataTable(request: Request):
+async def Incoming_stream_processing_to_get_DataTable(file: UploadFile = File(...)):
     logger.info("Incoming request received")
 
+    file_name = file.filename
+    logger.info(f"File name received: {file_name}")
+
     # Read file bytes from the request
-    byte_data = await request.body()
+    byte_data = await file.read()
     logger.info(f"File data read from request body successfully.")
-
-    # Detect file type using python-magic
-    file_type = magic.from_buffer(byte_data, mime=True)
-    logger.info(f"Detected file type: {file_type}")
-
     # Map detected file type to appropriate extensions
     extension_map = {
         "text/csv": ".csv",
@@ -89,78 +92,72 @@ async def Incoming_stream_processing_to_get_DataTable(request: Request):
         "application/json": ".json",
     }
     # Fallback to .csv if the type is unknown
+    file_type = magic.from_buffer(byte_data, mime=True)
     extension = extension_map.get(file_type, ".csv")
+    _, file_name_extension = os.path.splitext(file_name)
+
+    if extension == ".csv" and file_name_extension == ".txt":
+        extension = file_name_extension
+
     logger.info(f"File extension determined as: {extension}")
 
-    # Create a temporary file with the determined extension
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=extension)
 
-    try:
-        # Write data to temp file and close it
+    if extension == ".txt":
+        logger.info(f"I am in txt if")
+
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.txt')
         temp_file.write(byte_data)
         temp_file.close()
         file_path = temp_file.name
-        logger.info(f"Temporary file created: {file_path}")
 
-        # Use your validation logic on the saved file
         new_file = data_file(file_path)
-        cyclic_temp_file = TemperatureFileProcessor(file_path)
-        logger.info("Starting data validation and processing.")
-
-        same_col_dict = new_file.find_type_and_keyword()
-        logger.info(f"same_col_dict contents: {same_col_dict}")
-
-        no_col = list(same_col_dict.keys())[1]
-        logger.info(f"Column type detected: {no_col}")
-
-        if no_col == 343:
-            logger.info("Processing data as cyclic temperature file.")
-            table = cyclic_temp_file.table_of_df_temp()
-        else:
-            logger.info("Processing data as general file.")
-            table = new_file.table_of_df()
-
-        logger.info("Data processing completed successfully.")
-
-    finally:
-        # Ensure temp file is deleted after processing
+        data_table = new_file.table_of_df()
         os.unlink(file_path)
-        logger.info(f"Temporary file deleted: {file_path}")
 
-    return table
+        return data_table
+
+    else:
+        logger.info(f"I am in csv else")
+        # Create a temporary file with the determined extension
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=extension)
+
+        try:
+            # Write data to temp file and close it
+            temp_file.write(byte_data)
+            temp_file.close()
+            file_path = temp_file.name
+            logger.info(f"Temporary file created: {file_path}")
+
+            # Use your validation logic on the saved file
+            new_file = data_file(file_path)
+            cyclic_temp_file = TemperatureFileProcessor(file_path)
+            logger.info("Starting data validation and processing.")
+
+            same_col_dict = new_file.find_type_and_keyword()
+            logger.info(f"same_col_dict contents: {same_col_dict}")
+
+            no_col = list(same_col_dict.keys())[1]
+            logger.info(f"Column type detected: {no_col}")
+
+            if no_col == 343:
+                logger.info("Processing data as cyclic temperature file.")
+                table = cyclic_temp_file.table_of_df_temp()
+            else:
+                logger.info("Processing data as general file.")
+                table = new_file.table_of_df()
+
+            logger.info("Data processing completed successfully.")
+
+        finally:
+            # Ensure temp file is deleted after processing
+            os.unlink(file_path)
+            logger.info(f"Temporary file deleted: {file_path}")
+
+        return table
 
 
 @app.post(
-    "/resistance/txt/data/tablebody",
-    openapi_extra={
-        "requestBody": {
-            "content": {
-                "application/octet-stream": {
-                    "schema": {
-                        "type": "array",
-
-                    }
-                }
-            }
-        }
-    },
-)
-async def Incoming_stream_processing_to_get_DataTable(request: Request):
-    byte_data = await request.body()
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.txt')
-    temp_file.write(byte_data)
-    temp_file.close()
-    file_path = temp_file.name
-
-    new_file = data_file(file_path)
-    data_table = new_file.table_of_df()
-    os.unlink(file_path)
-
-    return data_table
-
-
-@app.post(
-    "/resistance/csv/data/databasevaluesbody",
+    "/resistance/data/databasevaluesbody",
     response_class=JSONResponse,
     openapi_extra={
         "requestBody": {
@@ -174,16 +171,16 @@ async def Incoming_stream_processing_to_get_DataTable(request: Request):
         }
     },
 )
-async def Incoming_stream_processing_to_get_DataTable(request: Request):
+async def Incoming_stream_processing_to_get_DataTable(file: UploadFile = File(...)):
     logger.info("Incoming request received")
-    try:
-        byte_data = await request.body()
-        file_size = len(byte_data)
-        logger.info(f"File data read from request body successfully. File size: {file_size} bytes")
 
-        # Detect file type using python-magic
-        file_type = magic.from_buffer(byte_data, mime=True)
-        logger.info(f"Detected file type: {file_type}")
+    file_name = file.filename
+    logger.info(f"File name received: {file_name}")
+
+    try:
+        # Read file bytes from the request
+        byte_data = await file.read()
+        logger.info("File data read from request body successfully.")
 
         # Map detected file type to appropriate extensions
         extension_map = {
@@ -192,289 +189,161 @@ async def Incoming_stream_processing_to_get_DataTable(request: Request):
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
             "application/json": ".json",
         }
+        # Fallback to .csv if the type is unknown
+        file_type = magic.from_buffer(byte_data, mime=True)
         extension = extension_map.get(file_type, ".csv")
+        _, file_name_extension = os.path.splitext(file_name)
+
+        if extension == ".csv" and file_name_extension == ".txt":
+            extension = file_name_extension
+
         logger.info(f"File extension determined as: {extension}")
 
-        # Create a temporary file with the determined extension
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=extension)
-
-        try:
-            temp_file.write(byte_data)
-            temp_file.close()
-            file_path = temp_file.name
-            logger.info(f"Temporary file created: {file_path}")
-
-            # Use your validation logic on the saved file
-            new_file = data_file(file_path)
-            cyclic_temp_file = TemperatureFileProcessor(file_path)
-            logger.info("Starting data validation and processing.")
+        if extension == ".txt":
+            logger.info("Processing a .txt file.")
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
             try:
-                same_col_dict = new_file.find_type_and_keyword()
-            except Exception as e:
-                logger.error(f"Error during `find_type_and_keyword`: {str(e)}", exc_info=True)
-                raise HTTPException(status_code=500, detail="Failed to process the file.")
-            logger.info(f"same_col_dict contents: {same_col_dict}")
-            no_col = list(same_col_dict.keys())[1]
-            logger.info(f"Column type detected: {no_col}")
+                temp_file.write(byte_data)
+                temp_file.close()
+                file_path = temp_file.name
 
-            if no_col == 343:
-                logger.info("Processing data as cyclic temperature file.")
-                rMin_rMax_MA_values = cyclic_temp_file.info_R_in_MA_for_database_temp()
-            else:
-                logger.info("Processing data as general file.")
+                new_file = data_file(file_path)
                 rMin_rMax_MA_values = new_file.info_R_in_MA_for_database()
+            finally:
+                os.unlink(file_path)
+                logger.info(f"Temporary file deleted: {file_path}")
 
-            logger.info("Data processing completed successfully.")
-        finally:
-            os.unlink(file_path)
-            logger.info(f"Temporary file deleted: {file_path}")
+            return rMin_rMax_MA_values
 
-        logger.info(f"Response JSON: {json.dumps(rMin_rMax_MA_values, indent=4)}")
-        # return rMin_rMax_MA_values
-        # return json.dumps(rMin_rMax_MA_values, indent=4)
-        # return rMin_rMax_MA_values
+        else:
+            logger.info("Processing a .csv or other file format.")
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=extension)
+            try:
+                temp_file.write(byte_data)
+                temp_file.close()
+                file_path = temp_file.name
+                logger.info(f"Temporary file created: {file_path}")
 
+                # Use your validation logic on the saved file
+                new_file = data_file(file_path)
+                cyclic_temp_file = TemperatureFileProcessor(file_path)
+                logger.info("Starting data validation and processing.")
+                try:
+                    same_col_dict = new_file.find_type_and_keyword()
+                except Exception as e:
+                    logger.error(f"Error during `find_type_and_keyword`: {str(e)}", exc_info=True)
+                    raise HTTPException(status_code=500, detail="Failed to process the file.")
+                logger.info(f"same_col_dict contents: {same_col_dict}")
+                no_col = list(same_col_dict.keys())[1]
+                logger.info(f"Column type detected: {no_col}")
 
+                if no_col == 343:
+                    logger.info("Processing data as cyclic temperature file.")
+                    rMin_rMax_MA_values = cyclic_temp_file.info_R_in_MA_for_database_temp()
+                else:
+                    logger.info("Processing data as general file.")
+                    rMin_rMax_MA_values = new_file.info_R_in_MA_for_database()
+
+                logger.info("Data processing completed successfully.")
+            finally:
+                os.unlink(file_path)
+                logger.info(f"Temporary file deleted: {file_path}")
+
+            # Log the JSON response
+            response_json = json.dumps(rMin_rMax_MA_values, indent=4)
+            logger.info(f"Response JSON: {response_json}")
+
+            return rMin_rMax_MA_values
 
     except Exception as e:
         logger.error(f"Error during processing: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="An error occurred during processing.")
 
 
+
 @app.post(
-    "/resistance/txt/data/databasevaluesbody",
+    "/resistance/validation/body",
     openapi_extra={
         "requestBody": {
             "content": {
                 "application/octet-stream": {
                     "schema": {
                         "type": "array",
-
                     }
                 }
             }
         }
     },
 )
-async def Incoming_stream_processing_to_get_DataTable(request: Request):
-    byte_data = await request.body()
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.txt')
-    temp_file.write(byte_data)
-    temp_file.close()
-    file_path = temp_file.name
-
-    new_file = data_file(file_path)
-    rMin_rMax_MA_values = new_file.info_R_in_MA_for_database()
-    os.unlink(file_path)
-
-    return rMin_rMax_MA_values
-
-
-@app.post(
-    "/resistance/csv/overall/data/databasevaluesbody",
-    openapi_extra={
-        "requestBody": {
-            "content": {
-                "application/octet-stream": {
-                    "schema": {
-                        "type": "array",
-
-                    }
-                }
-            }
-        }
-    },
-)
-async def Incoming_stream_processing_to_get_DataTable(request: Request):
-    # Read file bytes from the request
-    byte_data = await request.body()
-
-    # Detect file type using python-magic
-    file_type = magic.from_buffer(byte_data, mime=True)
-
-    # Map detected file type to appropriate extensions
-    extension_map = {
-        "text/csv": ".csv",
-        "application/vnd.ms-excel": ".xls",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
-        "application/json": ".json",
-    }
-    # Fallback to .csv if the type is unknown
-    extension = extension_map.get(file_type, ".csv")
-
-    # Create a temporary file with the determined extension
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=extension)
+async def Incoming_stream_processing_to_get_DataTable(file: UploadFile = File(...)):
+    logger.info("Incoming request received")
 
     try:
-        # Write data to temp file and close it
-        temp_file.write(byte_data)
-        temp_file.close()
-        file_path = temp_file.name
-        print("Temporary file saved as:", file_path)
+        # Extract file name and log
+        file_name = file.filename
+        logger.info(f"File name received: {file_name}")
 
-        # Use your validation logic on the saved file
-        new_file = data_file(file_path)
-        cyclic_temp_file = TemperatureFileProcessor(file_path)
-        same_col_dict = new_file.find_type_and_keyword()
-        no_col = list(same_col_dict.keys())[1]
-        if no_col == 343:
-            rMin_rMax_MA_overall = cyclic_temp_file.info_for_database_temp()
+        # Read file bytes from the request
+        byte_data = await file.read()
+        logger.info("File data read from request body successfully.")
+
+        # Map detected file type to appropriate extensions
+        extension_map = {
+            "text/csv": ".csv",
+            "application/vnd.ms-excel": ".xls",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+            "application/json": ".json",
+        }
+
+        # Determine file extension based on file type
+        file_type = magic.from_buffer(byte_data, mime=True)
+        extension = extension_map.get(file_type, ".csv")
+        _, file_name_extension = os.path.splitext(file_name)
+
+        # Adjust extension for specific cases
+        if extension == ".csv" and file_name_extension == ".txt":
+            extension = file_name_extension
+
+        logger.info(f"File extension determined as: {extension}")
+
+        # Handle text files
+        if extension == ".txt":
+            logger.info("Processing as a .txt file.")
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
+            try:
+                temp_file.write(byte_data)
+                temp_file.close()
+                file_path = temp_file.name
+
+                # Perform validation
+                new_file = data_file(file_path)
+                validation_status = new_file.file_validation()
+            finally:
+                os.unlink(file_path)
+                logger.info(f"Temporary file deleted: {file_path}")
+
+            return validation_status
+
+        # Handle CSV and other formats
         else:
-            rMin_rMax_MA_overall = new_file.info_for_database()
+            logger.info("Processing as a .csv or other file format.")
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=extension)
+            try:
+                temp_file.write(byte_data)
+                temp_file.close()
+                file_path = temp_file.name
+                logger.info(f"Temporary file created: {file_path}")
 
-    finally:
-        # Ensure temp file is deleted after processing
-        os.unlink(file_path)
+                # Perform validation
+                new_file = data_file(file_path)
+                validation_status = new_file.file_validation()
+            finally:
+                os.unlink(file_path)
+                logger.info(f"Temporary file deleted: {file_path}")
 
-    return rMin_rMax_MA_overall
+            return validation_status
 
-
-@app.post(
-    "/resistance/txt/Overall/data/databasevaluesbody",
-    openapi_extra={
-        "requestBody": {
-            "content": {
-                "application/octet-stream": {
-                    "schema": {
-                        "type": "array",
-
-                    }
-                }
-            }
-        }
-    },
-)
-async def Incoming_stream_processing_to_get_DataTable(request: Request):
-    byte_data = await request.body()
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.txt')
-    temp_file.write(byte_data)
-    temp_file.close()
-    file_path = temp_file.name
-
-    new_file = data_file(file_path)
-    rMin_rMax_temperature_values = new_file.info_for_database()
-    os.unlink(file_path)
-
-    return rMin_rMax_temperature_values
-
-
-@app.post(
-    "/resistance/txt/Overall/data/databasevaluesbody",
-    openapi_extra={
-        "requestBody": {
-            "content": {
-                "application/octet-stream": {
-                    "schema": {
-                        "type": "array",
-
-                    }
-                }
-            }
-        }
-    },
-)
-async def Incoming_stream_processing_to_get_DataTable(request: Request):
-    byte_data = await request.body()
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.txt')
-    temp_file.write(byte_data)
-    temp_file.close()
-    file_path = temp_file.name
-
-    new_file = data_file(file_path)
-    rMin_rMax_temperature_values = new_file.info_for_database()
-    os.unlink(file_path)
-
-    return rMin_rMax_temperature_values
-
-
-@app.post(
-    "/resistance/csv/validation/body",
-    openapi_extra={
-        "requestBody": {
-            "content": {
-                "application/octet-stream": {
-                    "schema": {
-                        "type": "array",
-                    }
-                }
-            }
-        }
-    },
-)
-async def validation_of_incoming_file(request: Request):
-    # Read file bytes from the request
-    byte_data = await request.body()
-
-    # Detect file type using python-magic
-    file_type = magic.from_buffer(byte_data, mime=True)
-
-    # Map detected file type to appropriate extensions
-    extension_map = {
-        "text/csv": ".csv",
-        "application/vnd.ms-excel": ".xls",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
-        "application/json": ".json",
-    }
-    # Fallback to .csv if the type is unknown
-    extension = extension_map.get(file_type, ".csv")
-
-    # Create a temporary file with the determined extension
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=extension)
-
-    try:
-        # Write data to temp file and close it
-        temp_file.write(byte_data)
-        temp_file.close()
-        file_path = temp_file.name
-        print("Temporary file saved as:", file_path)
-
-        # Use your validation logic on the saved file
-        new_file = data_file(file_path)
-        validation_status = new_file.file_validation()
-
-    finally:
-        # Ensure temp file is deleted after processing
-        os.unlink(file_path)
-
-    return validation_status
-
-
-@app.post(
-    "/resistance/txt/validation/body",
-    openapi_extra={
-        "requestBody": {
-            "content": {
-                "application/octet-stream": {
-                    "schema": {
-                        "type": "array",
-
-                    }
-                }
-            }
-        }
-    },
-)
-async def validation_of_incoming_file(request: Request):
-    byte_data = await request.body()
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.txt')
-    temp_file.write(byte_data)
-    temp_file.close()
-    file_path = temp_file.name
-
-    new_file = data_file(file_path)
-    validation_status = new_file.file_validation()
-    os.unlink(file_path)
-    return validation_status
-
-
-@app.post("/resistance/validation/file")
-async def validation_of_incoming_file(file: UploadFile):
-    file_path = file.filename
-
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    new_file = data_file(file_path)
-    validation_status = new_file.file_validation()
-    return validation_status
+    except Exception as e:
+        logger.error(f"Error during processing: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="An error occurred during file validation.")
 
